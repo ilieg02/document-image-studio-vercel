@@ -26,6 +26,17 @@ type Asset = {
   edited: { name: string; blob: Blob }[];
 };
 
+type TextLayer = {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  colour: string;
+  coverOldText: boolean;
+  backgroundColour: string;
+};
+
 const allowed = new Set(['pdf', 'docx', 'png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff']);
 
 function ext(name: string) {
@@ -239,9 +250,11 @@ function Editor({
   onClose: () => void;
   onSave: (blob: Blob, extension: string) => void;
 }) {
-  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const baseCanvasRef = React.useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = React.useRef<HTMLCanvasElement>(null);
+
   const [format, setFormat] = React.useState('image/png');
-  const [text, setText] = React.useState('Note');
+  const [text, setText] = React.useState('Replacement text');
   const [textX, setTextX] = React.useState(40);
   const [textY, setTextY] = React.useState(60);
   const [fontSize, setFontSize] = React.useState(32);
@@ -249,22 +262,234 @@ function Editor({
   const [backgroundColour, setBackgroundColour] = React.useState('#ffffff');
   const [coverOldText, setCoverOldText] = React.useState(false);
 
+  const [textMode, setTextMode] = React.useState(false);
+  const [layers, setLayers] = React.useState<TextLayer[]>([]);
+  const [selectedLayerId, setSelectedLayerId] = React.useState<string | null>(null);
+  const [draggingLayerId, setDraggingLayerId] = React.useState<string | null>(null);
+  const [dragOffset, setDragOffset] = React.useState({ x: 0, y: 0 });
+
   React.useEffect(() => {
     async function load() {
       const img = await blobToImage(asset.blob);
-      const canvas = canvasRef.current!;
 
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      const base = baseCanvasRef.current!;
+      const overlay = overlayCanvasRef.current!;
 
-      canvas.getContext('2d')!.drawImage(img, 0, 0);
+      base.width = img.naturalWidth;
+      base.height = img.naturalHeight;
+      overlay.width = img.naturalWidth;
+      overlay.height = img.naturalHeight;
+
+      base.getContext('2d')!.drawImage(img, 0, 0);
+
+      setTextX(Math.round(img.naturalWidth * 0.08));
+      setTextY(Math.round(img.naturalHeight * 0.08));
+      setLayers([]);
+      setSelectedLayerId(null);
+      setTextMode(false);
     }
 
     load();
   }, [asset.id]);
 
+  React.useEffect(() => {
+    redrawOverlay();
+  }, [layers, selectedLayerId]);
+
+  function canvasPoint(event: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = overlayCanvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+
+    return {
+      x: ((event.clientX - rect.left) * canvas.width) / rect.width,
+      y: ((event.clientY - rect.top) * canvas.height) / rect.height
+    };
+  }
+
+  function drawTextLayer(ctx: CanvasRenderingContext2D, layer: TextLayer, selected = false) {
+    ctx.save();
+
+    ctx.font = `${layer.fontSize}px system-ui`;
+    ctx.textBaseline = 'top';
+
+    const metrics = ctx.measureText(layer.text);
+    const padding = 8;
+    const boxWidth = metrics.width + padding * 2;
+    const boxHeight = layer.fontSize + padding * 2;
+
+    if (layer.coverOldText) {
+      ctx.fillStyle = layer.backgroundColour;
+      ctx.fillRect(layer.x - padding, layer.y - padding, boxWidth, boxHeight);
+    }
+
+    ctx.fillStyle = layer.colour;
+    ctx.fillText(layer.text, layer.x, layer.y);
+
+    if (selected) {
+      ctx.strokeStyle = '#ffbf47';
+      ctx.lineWidth = Math.max(2, layer.fontSize * 0.06);
+      ctx.setLineDash([8, 5]);
+      ctx.strokeRect(layer.x - padding, layer.y - padding, boxWidth, boxHeight);
+    }
+
+    ctx.restore();
+  }
+
+  function redrawOverlay() {
+    const overlay = overlayCanvasRef.current;
+    if (!overlay) return;
+
+    const ctx = overlay.getContext('2d')!;
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    for (const layer of layers) {
+      drawTextLayer(ctx, layer, layer.id === selectedLayerId);
+    }
+  }
+
+  function layerAt(x: number, y: number) {
+    const probeCanvas = document.createElement('canvas');
+    const probe = probeCanvas.getContext('2d')!;
+
+    for (const layer of [...layers].reverse()) {
+      probe.font = `${layer.fontSize}px system-ui`;
+
+      const width = probe.measureText(layer.text).width + 16;
+      const height = layer.fontSize + 16;
+
+      if (
+        x >= layer.x - 8 &&
+        x <= layer.x - 8 + width &&
+        y >= layer.y - 8 &&
+        y <= layer.y - 8 + height
+      ) {
+        return layer;
+      }
+    }
+
+    return null;
+  }
+
+  function addTextLayer(x = textX, y = textY) {
+    const layer: TextLayer = {
+      id: crypto.randomUUID(),
+      text,
+      x: Math.round(x),
+      y: Math.round(y),
+      fontSize,
+      colour: textColour,
+      coverOldText,
+      backgroundColour
+    };
+
+    setLayers((current) => [...current, layer]);
+    setSelectedLayerId(layer.id);
+    setTextX(layer.x);
+    setTextY(layer.y);
+  }
+
+  function updateSelectedLayer(patch: Partial<TextLayer>) {
+    if (!selectedLayerId) return;
+
+    setLayers((current) =>
+      current.map((layer) =>
+        layer.id === selectedLayerId ? { ...layer, ...patch } : layer
+      )
+    );
+  }
+
+  function deleteSelectedLayer() {
+    if (!selectedLayerId) return;
+
+    setLayers((current) => current.filter((layer) => layer.id !== selectedLayerId));
+    setSelectedLayerId(null);
+  }
+
+  function handleCanvasPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+    const point = canvasPoint(event);
+    const hit = layerAt(point.x, point.y);
+
+    if (hit) {
+      setSelectedLayerId(hit.id);
+      setDraggingLayerId(hit.id);
+      setDragOffset({
+        x: point.x - hit.x,
+        y: point.y - hit.y
+      });
+      return;
+    }
+
+    if (textMode) {
+      addTextLayer(point.x, point.y);
+      setTextMode(false);
+      return;
+    }
+
+    setSelectedLayerId(null);
+    setTextX(Math.round(point.x));
+    setTextY(Math.round(point.y));
+  }
+
+  function handleCanvasPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!draggingLayerId) return;
+
+    const point = canvasPoint(event);
+    const nextX = Math.round(point.x - dragOffset.x);
+    const nextY = Math.round(point.y - dragOffset.y);
+
+    setTextX(nextX);
+    setTextY(nextY);
+
+    setLayers((current) =>
+      current.map((layer) =>
+        layer.id === draggingLayerId
+          ? {
+              ...layer,
+              x: nextX,
+              y: nextY
+            }
+          : layer
+      )
+    );
+  }
+
+  function handleCanvasPointerUp() {
+    setDraggingLayerId(null);
+  }
+
+  function mergeCanvases() {
+    const base = baseCanvasRef.current!;
+
+    const merged = document.createElement('canvas');
+    merged.width = base.width;
+    merged.height = base.height;
+
+    const ctx = merged.getContext('2d')!;
+    ctx.drawImage(base, 0, 0);
+
+    for (const layer of layers) {
+      drawTextLayer(ctx, layer, false);
+    }
+
+    return merged;
+  }
+
+  function replaceBaseWithMerged() {
+    const merged = mergeCanvases();
+    const base = baseCanvasRef.current!;
+    const ctx = base.getContext('2d')!;
+
+    ctx.clearRect(0, 0, base.width, base.height);
+    ctx.drawImage(merged, 0, 0);
+
+    setLayers([]);
+    setSelectedLayerId(null);
+  }
+
   function rotateRight() {
-    const canvas = canvasRef.current!;
+    replaceBaseWithMerged();
+
+    const canvas = baseCanvasRef.current!;
     const source = document.createElement('canvas');
 
     source.width = canvas.width;
@@ -274,6 +499,9 @@ function Editor({
     canvas.width = source.height;
     canvas.height = source.width;
 
+    overlayCanvasRef.current!.width = canvas.width;
+    overlayCanvasRef.current!.height = canvas.height;
+
     const ctx = canvas.getContext('2d')!;
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate(Math.PI / 2);
@@ -281,7 +509,9 @@ function Editor({
   }
 
   function cropCentre() {
-    const canvas = canvasRef.current!;
+    replaceBaseWithMerged();
+
+    const canvas = baseCanvasRef.current!;
     const width = Math.round(canvas.width * 0.75);
     const height = Math.round(canvas.height * 0.75);
     const x = Math.round((canvas.width - width) / 2);
@@ -290,16 +520,21 @@ function Editor({
     const crop = document.createElement('canvas');
     crop.width = width;
     crop.height = height;
-
     crop.getContext('2d')!.drawImage(canvas, x, y, width, height, 0, 0, width, height);
 
     canvas.width = width;
     canvas.height = height;
+
+    overlayCanvasRef.current!.width = width;
+    overlayCanvasRef.current!.height = height;
+
     canvas.getContext('2d')!.drawImage(crop, 0, 0);
   }
 
   function applyFilter(filter: string) {
-    const canvas = canvasRef.current!;
+    replaceBaseWithMerged();
+
+    const canvas = baseCanvasRef.current!;
     const copy = document.createElement('canvas');
 
     copy.width = canvas.width;
@@ -314,37 +549,11 @@ function Editor({
     ctx.drawImage(copy, 0, 0);
   }
 
-function addText() {
-  const canvas = canvasRef.current!;
-  const ctx = canvas.getContext('2d')!;
-
-  const x = Number(textX);
-  const y = Number(textY);
-  const size = Number(fontSize);
-
-  ctx.font = `${size}px system-ui`;
-  ctx.textBaseline = 'top';
-
-  if (coverOldText) {
-    const metrics = ctx.measureText(text);
-    const padding = 8;
-
-    ctx.fillStyle = backgroundColour;
-    ctx.fillRect(
-      x - padding,
-      y - padding,
-      metrics.width + padding * 2,
-      size + padding * 2
-    );
-  }
-
-  ctx.fillStyle = textColour;
-  ctx.fillText(text, x, y);
-}
-
   async function exportImage(saveVersion: boolean) {
-    const extension = format === 'image/png' ? 'png' : format === 'image/jpeg' ? 'jpg' : 'webp';
-    const blob = await canvasToBlob(canvasRef.current!, format, 0.92);
+    const extension =
+      format === 'image/png' ? 'png' : format === 'image/jpeg' ? 'jpg' : 'webp';
+
+    const blob = await canvasToBlob(mergeCanvases(), format, 0.92);
 
     if (saveVersion) {
       onSave(blob, extension);
@@ -352,6 +561,8 @@ function addText() {
       download(blob, `image-${String(asset.number).padStart(3, '0')}-edited.${extension}`);
     }
   }
+
+  const selectedLayer = layers.find((layer) => layer.id === selectedLayerId);
 
   return (
     <div className="backdrop" role="dialog" aria-modal="true">
@@ -363,76 +574,132 @@ function addText() {
 
         <div className="editGrid">
           <div className="canvasBox">
-            <canvas ref={canvasRef} />
+            <div className="canvasStack">
+              <canvas ref={baseCanvasRef} className="baseCanvas" />
+              <canvas
+                ref={overlayCanvasRef}
+                className="overlayCanvas"
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
+                onPointerLeave={handleCanvasPointerUp}
+                style={{
+                  cursor: textMode ? 'crosshair' : draggingLayerId ? 'grabbing' : 'default'
+                }}
+                aria-label="Click on the image to place or select text"
+              />
+            </div>
           </div>
 
           <aside>
+            <button onClick={() => setTextMode((current) => !current)}>
+              {textMode ? 'Cancel text tool' : 'Text tool: click image to place'}
+            </button>
+
+            <p className="small">
+              Click the image to place text. Click existing text to select it. Drag selected text to move it.
+            </p>
+
+            <label>
+              Text
+              <input
+                value={selectedLayer ? selectedLayer.text : text}
+                onChange={(event) => {
+                  setText(event.target.value);
+                  updateSelectedLayer({ text: event.target.value });
+                }}
+              />
+            </label>
+
+            <label>
+              X position
+              <input
+                type="number"
+                value={selectedLayer ? Math.round(selectedLayer.x) : textX}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTextX(value);
+                  updateSelectedLayer({ x: value });
+                }}
+              />
+            </label>
+
+            <label>
+              Y position
+              <input
+                type="number"
+                value={selectedLayer ? Math.round(selectedLayer.y) : textY}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setTextY(value);
+                  updateSelectedLayer({ y: value });
+                }}
+              />
+            </label>
+
+            <label>
+              Font size
+              <input
+                type="number"
+                min="8"
+                value={selectedLayer ? selectedLayer.fontSize : fontSize}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setFontSize(value);
+                  updateSelectedLayer({ fontSize: value });
+                }}
+              />
+            </label>
+
+            <label>
+              Text colour
+              <input
+                type="color"
+                value={selectedLayer ? selectedLayer.colour : textColour}
+                onChange={(event) => {
+                  setTextColour(event.target.value);
+                  updateSelectedLayer({ colour: event.target.value });
+                }}
+              />
+            </label>
+
+            <label>
+              Cover old text
+              <input
+                type="checkbox"
+                checked={selectedLayer ? selectedLayer.coverOldText : coverOldText}
+                onChange={(event) => {
+                  setCoverOldText(event.target.checked);
+                  updateSelectedLayer({ coverOldText: event.target.checked });
+                }}
+              />
+            </label>
+
+            <label>
+              Cover colour
+              <input
+                type="color"
+                value={selectedLayer ? selectedLayer.backgroundColour : backgroundColour}
+                onChange={(event) => {
+                  setBackgroundColour(event.target.value);
+                  updateSelectedLayer({ backgroundColour: event.target.value });
+                }}
+              />
+            </label>
+
+            <button onClick={() => addTextLayer()}>Add text at saved position</button>
+            <button onClick={deleteSelectedLayer} disabled={!selectedLayerId}>
+              Delete selected text
+            </button>
+            <button onClick={replaceBaseWithMerged}>Apply text permanently</button>
+
+            <hr />
+
             <button onClick={rotateRight}>Rotate right</button>
             <button onClick={cropCentre}>Crop centre</button>
             <button onClick={() => applyFilter('brightness(1.2)')}>Brighten</button>
             <button onClick={() => applyFilter('contrast(1.25)')}>Increase contrast</button>
             <button onClick={() => applyFilter('grayscale(1)')}>Greyscale</button>
-
-          <label>
-            Text
-            <input value={text} onChange={(event) => setText(event.target.value)} />
-          </label>
-          
-          <label>
-            X position
-            <input
-              type="number"
-              value={textX}
-              onChange={(event) => setTextX(Number(event.target.value))}
-            />
-          </label>
-          
-          <label>
-            Y position
-            <input
-              type="number"
-              value={textY}
-              onChange={(event) => setTextY(Number(event.target.value))}
-            />
-          </label>
-          
-          <label>
-            Font size
-            <input
-              type="number"
-              value={fontSize}
-              onChange={(event) => setFontSize(Number(event.target.value))}
-            />
-          </label>
-          
-          <label>
-            Text colour
-            <input
-              type="color"
-              value={textColour}
-              onChange={(event) => setTextColour(event.target.value)}
-            />
-          </label>
-          
-          <label>
-            Cover old text
-            <input
-              type="checkbox"
-              checked={coverOldText}
-              onChange={(event) => setCoverOldText(event.target.checked)}
-            />
-          </label>
-          
-          <label>
-            Cover colour
-            <input
-              type="color"
-              value={backgroundColour}
-              onChange={(event) => setBackgroundColour(event.target.value)}
-            />
-          </label>
-          
-          <button onClick={addText}>Add / replace text</button>
 
             <label>
               Export format
@@ -559,8 +826,8 @@ function App() {
       <header className="hero">
         <h1>Document Image Studio</h1>
         <p>
-          Upload a PDF, DOCX or image, extract visuals, select by number, edit and download.
-          Files stay in your browser.
+          Upload a PDF, DOCX or image, extract visuals, select by number, edit text, move text,
+          replace old text and download. Files stay in your browser.
         </p>
       </header>
 
