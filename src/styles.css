@@ -22,21 +22,14 @@ main {
   padding: 24px 0;
 }
 
-.eyebrow {
-  color: #155bd5;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
 h1 {
   font-size: clamp(2.2rem, 6vw, 4.6rem);
   line-height: 0.95;
   margin: 0;
 }
 
-.hero p:not(.eyebrow) {
-  max-width: 820px;
+.hero p {
+  max-width: 900px;
   color: #526173;
   font-size: 1.1rem;
 }
@@ -108,6 +101,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 input,
 select {
   font: inherit;
@@ -150,7 +148,7 @@ dd {
 }
 
 .editor {
-  width: min(1120px, 96vw);
+  width: min(1220px, 96vw);
   max-height: 94vh;
   overflow: auto;
   background: white;
@@ -167,7 +165,7 @@ dd {
 
 .editGrid {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) 320px;
+  grid-template-columns: minmax(320px, 1fr) 340px;
   gap: 18px;
 }
 
@@ -180,16 +178,42 @@ dd {
   max-height: 72vh;
 }
 
-.canvasBox canvas {
+.canvasStack {
+  position: relative;
+  display: inline-block;
+}
+
+.baseCanvas,
+.overlayCanvas {
+  display: block;
   max-width: 100%;
   height: auto;
   background: white;
+}
+
+.overlayCanvas {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  background: transparent;
 }
 
 aside {
   display: grid;
   gap: 10px;
   align-content: start;
+}
+
+.small {
+  font-size: 0.9rem;
+  color: #526173;
+  margin: 0;
+}
+
+hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid #dbe4f0;
 }
 
 :focus-visible {
