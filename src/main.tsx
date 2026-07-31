@@ -242,6 +242,12 @@ function Editor({
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const [format, setFormat] = React.useState('image/png');
   const [text, setText] = React.useState('Note');
+  const [textX, setTextX] = React.useState(40);
+  const [textY, setTextY] = React.useState(60);
+  const [fontSize, setFontSize] = React.useState(32);
+  const [textColour, setTextColour] = React.useState('#1457c8');
+  const [backgroundColour, setBackgroundColour] = React.useState('#ffffff');
+  const [coverOldText, setCoverOldText] = React.useState(false);
 
   React.useEffect(() => {
     async function load() {
@@ -308,14 +314,33 @@ function Editor({
     ctx.drawImage(copy, 0, 0);
   }
 
-  function addText() {
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext('2d')!;
+function addText() {
+  const canvas = canvasRef.current!;
+  const ctx = canvas.getContext('2d')!;
 
-    ctx.font = `${Math.max(24, canvas.width * 0.04)}px system-ui`;
-    ctx.fillStyle = '#1457c8';
-    ctx.fillText(text, 40, 60);
+  const x = Number(textX);
+  const y = Number(textY);
+  const size = Number(fontSize);
+
+  ctx.font = `${size}px system-ui`;
+  ctx.textBaseline = 'top';
+
+  if (coverOldText) {
+    const metrics = ctx.measureText(text);
+    const padding = 8;
+
+    ctx.fillStyle = backgroundColour;
+    ctx.fillRect(
+      x - padding,
+      y - padding,
+      metrics.width + padding * 2,
+      size + padding * 2
+    );
   }
+
+  ctx.fillStyle = textColour;
+  ctx.fillText(text, x, y);
+}
 
   async function exportImage(saveVersion: boolean) {
     const extension = format === 'image/png' ? 'png' : format === 'image/jpeg' ? 'jpg' : 'webp';
@@ -348,12 +373,66 @@ function Editor({
             <button onClick={() => applyFilter('contrast(1.25)')}>Increase contrast</button>
             <button onClick={() => applyFilter('grayscale(1)')}>Greyscale</button>
 
-            <label>
-              Text
-              <input value={text} onChange={(event) => setText(event.target.value)} />
-            </label>
-
-            <button onClick={addText}>Add text</button>
+          <label>
+            Text
+            <input value={text} onChange={(event) => setText(event.target.value)} />
+          </label>
+          
+          <label>
+            X position
+            <input
+              type="number"
+              value={textX}
+              onChange={(event) => setTextX(Number(event.target.value))}
+            />
+          </label>
+          
+          <label>
+            Y position
+            <input
+              type="number"
+              value={textY}
+              onChange={(event) => setTextY(Number(event.target.value))}
+            />
+          </label>
+          
+          <label>
+            Font size
+            <input
+              type="number"
+              value={fontSize}
+              onChange={(event) => setFontSize(Number(event.target.value))}
+            />
+          </label>
+          
+          <label>
+            Text colour
+            <input
+              type="color"
+              value={textColour}
+              onChange={(event) => setTextColour(event.target.value)}
+            />
+          </label>
+          
+          <label>
+            Cover old text
+            <input
+              type="checkbox"
+              checked={coverOldText}
+              onChange={(event) => setCoverOldText(event.target.checked)}
+            />
+          </label>
+          
+          <label>
+            Cover colour
+            <input
+              type="color"
+              value={backgroundColour}
+              onChange={(event) => setBackgroundColour(event.target.value)}
+            />
+          </label>
+          
+          <button onClick={addText}>Add / replace text</button>
 
             <label>
               Export format
@@ -478,7 +557,6 @@ function App() {
   return (
     <main>
       <header className="hero">
-        <p className="eyebrow">React + Vercel</p>
         <h1>Document Image Studio</h1>
         <p>
           Upload a PDF, DOCX or image, extract visuals, select by number, edit and download.
