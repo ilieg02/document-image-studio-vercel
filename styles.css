@@ -1,0 +1,26 @@
+# Document Image Studio
+
+React + Vercel browser app for extracting and editing images from PDF, DOCX and image files.
+
+## Deploy to Vercel
+
+Use these settings:
+
+- Framework Preset: Vite
+- Install Command: npm install
+- Build Command: npm run build
+- Output Directory: dist
+- Root Directory: ./
+
+## Folder structure
+
+- package.json
+- index.html
+- vite.config.ts
+- tsconfig.json
+- src/main.tsx
+- src/styles.css
+
+## Notes
+
+PDFs are rendered using PDF.js. DOCX images are extracted from `word/media` using JSZip. Legacy `.doc` files are not supported in a browser-only app, so save them as PDF or DOCX first.
